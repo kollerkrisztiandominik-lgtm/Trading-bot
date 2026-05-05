@@ -36,7 +36,8 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 def run_web():
-    HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    server = HTTPServer(("0.0.0.0", 8080), Handler)
+    server.serve_forever()
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
@@ -159,7 +160,8 @@ def fetch_prices(from_cur, to_cur):
         closes = [float(v["4. close"]) for v in list(data[key].values())[:60]]
         closes.reverse()
         return closes
-    except:
+    except Exception as e:
+        logger.error(f"Fetch error: {e}")
         return []
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -191,12 +193,12 @@ async def send_signals(message, context):
         sig = res["signal"]
         conf = res.get("confidence", 0)
         if sig == "BUY":
-            emoji = "VETEL"
+            action = "VETEL"
         elif sig == "SELL":
-            emoji = "ELADAS"
+            action = "ELADAS"
         else:
-            emoji = "VARJ"
-        msg += pair + " OTC - " + emoji + "\n"
+            action = "VARJ"
+        msg += pair + " OTC - " + action + "\n"
         if conf > 0:
             msg += "Konfidencia: " + str(conf) + "%\n"
         if res.get("reason"):
@@ -236,14 +238,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif q.data == "help":
         await q.message.reply_text("VETEL = ar felfelé megy\nELADAS = ar lefelé megy\nVARJ = gyenge jelzes\n\n70%+ = eros jelzes\nMax $5 per kereskedés")
 
-def main():
-    threading.Thread(target=run_web, daemon=True).start()
+async def main_async():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", lambda u, c: send_signals(u.message, c)))
     app.add_handler(CallbackQueryHandler(button))
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
     print("Bot fut!")
-    app.run_polling()
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
+    web_thread = threading.Thread(target=run_web, daemon=True)
+    web_thread.start()
+    asyncio.run(main_async())
