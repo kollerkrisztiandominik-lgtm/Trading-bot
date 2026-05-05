@@ -1,12 +1,14 @@
 import logging
 import asyncio
+import threading
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-BOT_TOKEN = 8718239953:AAFokieIL3T-ER7ythkFQFqYKn1ifKOGPRg
-ALPHA_VANTAGE_KEY = 34TCBI9OSY59H2VR
+BOT_TOKEN = "8718239953:AAFokieIL3T-ER7ythkFQFqYKn1ifKOGPRg"
+ALPHA_VANTAGE_KEY = "34TCBI9OSY59H2VR"
 
 OTC_PAIRS = [
     "AUD/CAD", "AUD/CHF", "AUD/NZD", "AUD/USD",
@@ -24,6 +26,17 @@ AV_SYMBOLS = {
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+    def log_message(self, format, *args):
+        pass
+
+def run_web():
+    HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
@@ -77,40 +90,62 @@ def calculate_stochastic(prices, period=14):
 
 def analyze_signal(prices):
     if len(prices) < 30:
-        return {"signal": "WAIT", "confidence": 0, "reason": "Nincs elég adat"}
+        return {"signal": "WAIT", "confidence": 0, "reason": "Nincs eleg adat"}
     rsi = calculate_rsi(prices)
     macd_line, signal_line, histogram = calculate_macd(prices)
     bb_mid, bb_upper, bb_lower = calculate_bollinger(prices)
     stoch = calculate_stochastic(prices)
     current = prices[-1]
     buy, sell, reasons = 0, 0, []
-    if rsi < 30: buy += 2; reasons.append(f"RSI túladott ({rsi:.1f})")
-    elif rsi < 45: buy += 1
-    elif rsi > 70: sell += 2; reasons.append(f"RSI túlvett ({rsi:.1f})")
-    elif rsi > 55: sell += 1
-    if macd_line > signal_line and histogram > 0: buy += 2; reasons.append("MACD bullish")
-    elif macd_line < signal_line and histogram < 0: sell += 2; reasons.append("MACD bearish")
-    if current < bb_lower: buy += 2; reasons.append("Alsó BB alatt")
-    elif current > bb_upper: sell += 2; reasons.append("Felső BB felett")
-    elif current < bb_mid: buy += 1
-    else: sell += 1
-    if stoch < 20: buy += 1; reasons.append(f"Stoch túladott ({stoch:.1f})")
-    elif stoch > 80: sell += 1; reasons.append(f"Stoch túlvett ({stoch:.1f})")
+    if rsi < 30:
+        buy += 2
+        reasons.append("RSI tuladott")
+    elif rsi < 45:
+        buy += 1
+    elif rsi > 70:
+        sell += 2
+        reasons.append("RSI tulvett")
+    elif rsi > 55:
+        sell += 1
+    if macd_line > signal_line and histogram > 0:
+        buy += 2
+        reasons.append("MACD bullish")
+    elif macd_line < signal_line and histogram < 0:
+        sell += 2
+        reasons.append("MACD bearish")
+    if current < bb_lower:
+        buy += 2
+        reasons.append("Also BB alatt")
+    elif current > bb_upper:
+        sell += 2
+        reasons.append("Felso BB felett")
+    elif current < bb_mid:
+        buy += 1
+    else:
+        sell += 1
+    if stoch < 20:
+        buy += 1
+        reasons.append("Stoch tuladott")
+    elif stoch > 80:
+        sell += 1
+        reasons.append("Stoch tulvett")
     if len(prices) >= 5:
-        if prices[-1] > prices[-5]: buy += 0.5
-        else: sell += 0.5
+        if prices[-1] > prices[-5]:
+            buy += 0.5
+        else:
+            sell += 0.5
     total = buy + sell
     if total == 0:
         return {"signal": "WAIT", "confidence": 0, "reason": "Semleges piac"}
     if buy > sell:
         conf = int((buy / total) * 100)
         if conf >= 60:
-            return {"signal": "BUY", "confidence": conf, "rsi": rsi, "stoch": stoch, "reason": " | ".join(reasons[:3])}
+            return {"signal": "BUY", "confidence": conf, "reason": " | ".join(reasons[:3])}
     elif sell > buy:
         conf = int((sell / total) * 100)
         if conf >= 60:
-            return {"signal": "SELL", "confidence": conf, "rsi": rsi, "stoch": stoch, "reason": " | ".join(reasons[:3])}
-    return {"signal": "WAIT", "confidence": 50, "reason": "Gyenge jelzés"}
+            return {"signal": "SELL", "confidence": conf, "reason": " | ".join(reasons[:3])}
+    return {"signal": "WAIT", "confidence": 50, "reason": "Gyenge jelzes"}
 
 def fetch_prices(from_cur, to_cur):
     try:
@@ -129,43 +164,46 @@ def fetch_prices(from_cur, to_cur):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
-        [InlineKeyboardButton("📊 Jelzés kérése", callback_data="get_signal")],
-        [InlineKeyboardButton("🔄 Auto BE", callback_data="auto_on"),
-         InlineKeyboardButton("🛑 Auto KI", callback_data="auto_off")],
-        [InlineKeyboardButton("ℹ️ Súgó", callback_data="help")],
+        [InlineKeyboardButton("Jelzes kerese", callback_data="get_signal")],
+        [InlineKeyboardButton("Auto BE", callback_data="auto_on"),
+         InlineKeyboardButton("Auto KI", callback_data="auto_off")],
+        [InlineKeyboardButton("Sugo", callback_data="help")],
     ]
     await update.message.reply_text(
-        "🤖 *Pocket Option OTC Trading Bot*\n\n"
-        "BUY/SELL jelzések technikai elemzés alapján.\n\n"
-        "⚠️ Csak azt kockáztasd amit elveszíthetsz!",
-        parse_mode="Markdown",
+        "Pocket Option OTC Trading Bot\n\nBUY/SELL jelzesek technikai elemzes alapjan.\n\nCsak azt kockaztasd amit elveszithetsz!",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
 async def send_signals(message, context):
-    await message.reply_text("🔍 Elemzés folyamatban...")
+    await message.reply_text("Elemzes folyamatban...")
     results = []
     for pair in OTC_PAIRS:
         from_cur, to_cur = AV_SYMBOLS[pair]
         prices = fetch_prices(from_cur, to_cur)
-        results.append((pair, analyze_signal(prices) if prices else {"signal": "WAIT", "confidence": 0, "reason": "Adat nem elérhető"}))
+        if prices:
+            results.append((pair, analyze_signal(prices)))
+        else:
+            results.append((pair, {"signal": "WAIT", "confidence": 0, "reason": "Adat nem elerheto"}))
         await asyncio.sleep(0.5)
     now = datetime.now().strftime("%H:%M:%S")
-    msg = f"📊 *Trading Jelzések* — {now}\n━━━━━━━━━━━━━━━━\n\n"
+    msg = "Trading Jelzesek - " + now + "\n\n"
     for pair, res in results:
         sig = res["signal"]
         conf = res.get("confidence", 0)
-        emoji = "🟢" if sig == "BUY" else "🔴" if sig == "SELL" else "🟡"
-        action = "VÉTEL ↑" if sig == "BUY" else "ELADÁS ↓" if sig == "SELL" else "VÁRJ ⏳"
-        msg += f"{emoji} *{pair} OTC* — {action}\n"
+        if sig == "BUY":
+            emoji = "VETEL"
+        elif sig == "SELL":
+            emoji = "ELADAS"
+        else:
+            emoji = "VARJ"
+        msg += pair + " OTC - " + emoji + "\n"
         if conf > 0:
-            msg += f"   Konfidencia: {conf}%\n"
+            msg += "Konfidencia: " + str(conf) + "%\n"
         if res.get("reason"):
-            msg += f"   Ok: {res['reason']}\n"
+            msg += "Ok: " + res["reason"] + "\n"
         msg += "\n"
-    msg += "━━━━━━━━━━━━━━━━\n⚠️ Max kockázat: $2-5 / kereskedés"
-    await message.reply_text(msg, parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Frissítés", callback_data="get_signal")]]))
+    msg += "Max kockazat: $2-5 per kereskedés"
+    await message.reply_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Frissites", callback_data="get_signal")]]))
 
 async def auto_job(context: ContextTypes.DEFAULT_TYPE):
     for pair in OTC_PAIRS:
@@ -175,12 +213,11 @@ async def auto_job(context: ContextTypes.DEFAULT_TYPE):
             continue
         res = analyze_signal(prices)
         if res["signal"] != "WAIT" and res.get("confidence", 0) >= 70:
-            emoji = "🟢" if res["signal"] == "BUY" else "🔴"
-            action = "VÉTEL ↑" if res["signal"] == "BUY" else "ELADÁS ↓"
+            action = "VETEL" if res["signal"] == "BUY" else "ELADAS"
+            now = datetime.now().strftime("%H:%M:%S")
             await context.bot.send_message(
                 chat_id=context.job.chat_id,
-                text=f"🚨 *ERŐS JELZÉS!*\n\n{emoji} *{pair} OTC* — {action}\nKonfidencia: {res['confidence']}%\nOk: {res.get('reason', '')}\n\n⏱ Ajánlott lejárat: 1 perc",
-                parse_mode="Markdown"
+                text="EROS JELZES! - " + now + "\n\n" + pair + " OTC - " + action + "\nKonfidencia: " + str(res["confidence"]) + "%\nOk: " + res.get("reason", "") + "\n\nAjanlo lejarat: 1 perc"
             )
         await asyncio.sleep(1)
 
@@ -190,43 +227,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "get_signal":
         await send_signals(q.message, context)
     elif q.data == "auto_on":
-        context.application.job_queue.run_repeating(auto_job, interval=300, first=10,
-            chat_id=q.message.chat_id, name=f"auto_{q.message.chat_id}")
-        await q.message.reply_text("✅ Auto jelzések bekapcsolva! (5 percenként)")
+        context.application.job_queue.run_repeating(auto_job, interval=300, first=10, chat_id=q.message.chat_id, name="auto_" + str(q.message.chat_id))
+        await q.message.reply_text("Auto jelzesek bekapcsolva! 5 percenkent")
     elif q.data == "auto_off":
-        for job in context.application.job_queue.get_jobs_by_name(f"auto_{q.message.chat_id}"):
+        for job in context.application.job_queue.get_jobs_by_name("auto_" + str(q.message.chat_id)):
             job.schedule_removal()
-        await q.message.reply_text("🛑 Auto jelzések kikapcsolva.")
+        await q.message.reply_text("Auto jelzesek kikapcsolva.")
     elif q.data == "help":
-        await q.message.reply_text(
-            "📖 *Súgó*\n\n🟢 BUY = Vétel\n🔴 SELL = Eladás\n🟡 WAIT = Várj\n\n"
-            "70%+ = Erős jelzés\n60-70% = Közepes\n\n⚠️ Max $5/kereskedés",
-            parse_mode="Markdown"
-        )
+        await q.message.reply_text("VETEL = ar felfelé megy\nELADAS = ar lefelé megy\nVARJ = gyenge jelzes\n\n70%+ = eros jelzes\nMax $5 per kereskedés")
 
 def main():
+    threading.Thread(target=run_web, daemon=True).start()
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", lambda u, c: send_signals(u.message, c)))
     app.add_handler(CallbackQueryHandler(button))
-    print("✅ Bot fut!")
+    print("Bot fut!")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running!")
-    def log_message(self, format, *args):
-        pass
-
-def run_web():
-    HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
-
-threading.Thread(target=run_web, daemon=True).start()
